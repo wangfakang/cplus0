@@ -1,0 +1,639 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Cplus0 by wangfakang</title>
+
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <script src="javascripts/scale.fix.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1 class="header">Cplus0</h1>
+        <p class="header">stl analysis</p>
+
+        <ul>
+          <li class="download"><a class="buttons" href="https://github.com/wangfakang/cplus0/zipball/master">Download ZIP</a></li>
+          <li class="download"><a class="buttons" href="https://github.com/wangfakang/cplus0/tarball/master">Download TAR</a></li>
+          <li><a class="buttons github" href="https://github.com/wangfakang/cplus0">View On GitHub</a></li>
+        </ul>
+
+        <p class="header">This project is maintained by <a class="header name" href="https://github.com/wangfakang">wangfakang</a></p>
+
+
+      </header>
+      <section>
+        <h1>
+<a id="一stl之空间配置器总结----" class="anchor" href="#%E4%B8%80stl%E4%B9%8B%E7%A9%BA%E9%97%B4%E9%85%8D%E7%BD%AE%E5%99%A8%E6%80%BB%E7%BB%93----" aria-hidden="true"><span class="octicon octicon-link"></span></a>一：STL之空间配置器总结    </h1>
+
+<p>内存池的总结：<br>
+  首先要看用户需要的空间是否在128字节之内，若大于128，则直接使用一级空间配置器，直接进行内存分配，否则使用内存池：
+具体过程是：       </p>
+
+<pre><code>1： 首先根据用户需求大小，把其调节成8的倍数，然后在16个自由空闲链表中去查找  
+(((bytes) + __ALIGN - 1) &amp; ~(__ALIGN-1));   
+2：若找到则把那块从Free_list中分配给用户    
+((bytes + __ALIGN -1) / __ALIGN -1);    
+3：若恰好找到的那一块是NULL的，则调用refill(ROUND_UP(n))函数，refill函数的意思就是重新填充free_list链表，
+在STL中规定的是为ree_list为NULL的那块在内存池中选取20块对应大小的内存分配给他，调用chunk_alloc(n,nobjs)函数，
+当内存池无法满足分配20块的时候则最少就要选取1块分配给他
+
+4：倘若此时内存池中剩下的内存大小比用户所需内存类型的1块还小的时候，则重新开辟池子（使用malloc其大小为：
+用户所需大小的2倍加上池子以前总大小的十六分之一即：size_t types_to_get   =2*total_types + ROUND_UP(heap_size&gt;&gt;4);）
+
+5：若此时开辟失败则在free_list中为NULL的下一块开始选择一块不为NULL的分配给内存池，然后若是成功则递归调用
+chunk_alloc(n,nobjs)函数
+
+6：若此时还是不可以满足的话则调用一级空间配置器来分配（allocate(types_to_get)函数首先还是会直接调用malloc函数，
+然后当失败的时候就会调用oo_malloc函数，oo_malloc函数首先会检查my_malloc_handler函数指针是否是NULL，若NULL的话
+就直接抛出异常，否则调用my_malloc_handler函数（意思是看用户可不可以还一些内存给系统），然后再重新调用malloc函数）
+
+[是free_list中所存储的obj*]
+</code></pre>
+
+<p>二：STL之iterator类型的萃取技术总结：</p>
+
+<p>首先迭代器的继承层次：       </p>
+
+<p>输入迭代器              输出迭代器        </p>
+
+<pre><code>           正向迭代器
+
+           双向迭代器
+
+           随机迭代器
+</code></pre>
+
+<p>输入迭代器：所指之物不允许外界改变，只可以读只可以operator++<br>
+输出迭代器：只可以用于写  只可以operator++<br>
+正向迭代器：可以做读写操作  只可以operator++<br>
+双向迭代器：可以双向做读写操作  即可以重载operator++   operator—<br>
+随机迭代器：由于操作的内存是连续的所以不仅可以重载operator++   operator—<br>
+还可以p+n等   </p>
+
+<h1>
+<a id="二迭代器的类型的萃取技术---" class="anchor" href="#%E4%BA%8C%E8%BF%AD%E4%BB%A3%E5%99%A8%E7%9A%84%E7%B1%BB%E5%9E%8B%E7%9A%84%E8%90%83%E5%8F%96%E6%8A%80%E6%9C%AF---" aria-hidden="true"><span class="octicon octicon-link"></span></a>二：迭代器的类型的萃取技术   </h1>
+
+<ul>
+<li>1：为何产生此技术：<br>
+ 其迭代器的类型的萃取技术主要用于一些算法里面比如insert当中以及copy，fill当中，
+ 主要是根据迭代器所指之物的类型的构造函数是否是无关紧要的，如果是无关紧要则直接
+ 进行移动（即有空间即可操作），否则要通过调用构造函数一个一个的进行构造，所以通
+ 过迭代器的类型的萃取技术从而可以提高效率<br>
+</li>
+</ul>
+
+<p>（const_iterator 与iterator的区别：只是对所指之物的限定）</p>
+
+<div class="highlight highlight-source-c"><pre>const_reference operator*() <span class="pl-k">const</span>    
+{   
+<span class="pl-k">return</span> <span class="pl-c1">_Acc::_Value</span>(_Ptr);   
+}
+reference operator*() <span class="pl-k">const</span>    
+{  
+<span class="pl-k">return</span> <span class="pl-c1">_Acc::_Value</span>(_Ptr);  
+}   </pre></div>
+
+<ul>
+<li>
+<p>2：此技术是如何做到的</p>
+
+<p>比方说是List中的迭代器，他是从Bidit双向迭代器继承过来的，而Bidit双向迭代器又是从
+iterator鼻祖继承过来的，当List中迭代器实参推演的时候就会一层一层的向上推演，直到
+鼻祖为止，而鼻祖iterator中把五中类型都进行了封装，然后通过iterator_traits得到迭代
+器的类型，以及所指之物的类型  </p>
+</li>
+</ul>
+
+<div class="highlight highlight-source-c"><pre>template&lt;class Category,class T,class Distance = <span class="pl-c1">ptrdiff_t</span>,
+         class Pointer = T*,class Reference = T&amp;&gt;
+<span class="pl-k">struct</span> iterator<span class="pl-c">//是最传统的迭代器[只是所有迭代器的鼻祖]</span>
+{
+    <span class="pl-k">typedef</span> Category  iterator_category;<span class="pl-c">//指的是迭代器的类型</span>
+    <span class="pl-k">typedef</span> T         value_type;<span class="pl-c">//迭代器所指之物的类型</span>
+    <span class="pl-k">typedef</span> Distance  difference_type;<span class="pl-c">//差值类型</span>
+    <span class="pl-k">typedef</span> Pointer   pointer;<span class="pl-c">//指针类型</span>
+    <span class="pl-k">typedef</span> Reference reference;<span class="pl-c">//引用类型</span>
+};
+
+
+template&lt;class _Ty, class _D&gt;
+<span class="pl-k">struct</span> _Bidit [主要是用于List中]: public iterator&lt;bidirectional_iterator_tag,
+                               _Ty, _D&gt; 
+{};
+
+template&lt;class _Ty, class _D&gt;
+<span class="pl-k">struct</span> _Ranit : public iterator&lt;random_access_iterator_tag,
+                                _Ty, _D&gt; 
+{};
+template&lt;class Iterator&gt;
+<span class="pl-k">struct</span> iterator_traits
+{[此步是真正的类型萃取]
+    <span class="pl-c">//iterator_traits()</span>
+    <span class="pl-c">//{</span>
+    <span class="pl-c">//  std::cout&lt;&lt;"iterator&lt;iteator&gt;"&lt;&lt;std::endl;</span>
+    <span class="pl-c">//}</span>
+    <span class="pl-k">typedef</span> typename Iterator::iterator_category iterator_category;
+    <span class="pl-k">typedef</span> typename Iterator::value_type        value_type;
+    <span class="pl-k">typedef</span> typename Iterator::difference_type   difference_type;
+    <span class="pl-k">typedef</span> typename Iterator::pointer           pointer;
+    <span class="pl-k">typedef</span> typename Iterator::reference         reference;
+};
+
+template&lt;class T&gt;
+<span class="pl-k">struct</span> iterator_traits&lt;T*&gt;
+{
+    <span class="pl-c">//iterator_traits()</span>
+    <span class="pl-c">//{</span>
+    <span class="pl-c">//  std::cout&lt;&lt;"iterator&lt;T*&gt;"&lt;&lt;std::endl;</span>
+    <span class="pl-c">//}</span>
+    <span class="pl-k">typedef</span> random_access_iterator_tag  iterator_category;
+    <span class="pl-k">typedef</span> T                           value_type;
+    <span class="pl-k">typedef</span> <span class="pl-c1">ptrdiff_t</span>                   difference_type;
+    <span class="pl-k">typedef</span> T*                          pointer;
+    <span class="pl-k">typedef</span> T&amp;                          reference;
+};
+
+
+template&lt;class T&gt;
+<span class="pl-k">struct</span> iterator_traits&lt;<span class="pl-k">const</span> T*&gt;
+{
+    <span class="pl-k">typedef</span> random_access_iterator_tag  iterator_category;
+    <span class="pl-k">typedef</span> T                           value_type;
+    <span class="pl-k">typedef</span> <span class="pl-c1">ptrdiff_t</span>                   difference_type;
+    <span class="pl-k">typedef</span> <span class="pl-k">const</span> T*                    pointer;
+    <span class="pl-k">typedef</span> <span class="pl-k">const</span> T&amp;                    reference;
+};
+
+template&lt;class Iterator&gt;
+<span class="pl-k">inline</span> typename iterator_traits&lt;Iterator&gt;::iterator_category
+<span class="pl-en">iterator_category</span>(<span class="pl-k">const</span> Iterator &amp;)
+{
+    <span class="pl-c">//iterator_traits&lt;Iterator&gt;();</span>
+    <span class="pl-k">typedef</span> typename iterator_traits&lt;Iterator&gt;::iterator_category category;
+    <span class="pl-k">return</span> <span class="pl-c1">category</span>();
+}
+template&lt;class Iterator&gt;
+<span class="pl-k">inline</span> typename iterator_traits&lt;Iterator&gt;::difference_type *
+<span class="pl-en">distance_type</span>(<span class="pl-k">const</span> Iterator &amp;)
+{
+    <span class="pl-k">return</span> static_cast&lt;typename iterator_traits&lt;Iterator&gt;::difference_type *&gt;(<span class="pl-c1">0</span>);
+}
+
+template&lt;class Iterator&gt;
+<span class="pl-k">inline</span> typename iterator_traits&lt;Iterator&gt;::value_type *[之所以要用指针是由于我们可以明确指针的大小<span class="pl-c1">4</span>字节，
+<span class="pl-c">//如果返回对象的话可能会大于4字节，所以在此也考虑到了效率]</span>
+<span class="pl-en">value_type</span>(<span class="pl-k">const</span> Iterator &amp;)
+{
+    <span class="pl-k">return</span> static_cast&lt;typename iterator_traits&lt;Iterator&gt;::value_type*&gt;(<span class="pl-c1">0</span>);
+}
+
+template&lt;class InputIterator&gt;
+<span class="pl-k">inline</span> typename iterator_traits&lt;InputIterator&gt;::difference_type
+<span class="pl-en">__distance</span>(InputIterator first,InputIterator last, 
+                               input_iterator_tag)
+{
+    typename iterator_traits&lt;InputIterator&gt;::difference_type n = <span class="pl-c1">0</span>;
+    <span class="pl-k">for</span>(; first != last; ++first)
+    {
+        ++n;
+    }
+    <span class="pl-k">return</span> n;
+}
+
+
+template&lt;class RandomAccessIterator&gt;
+<span class="pl-k">inline</span> typename iterator_traits&lt;RandomAccessIterator&gt;::difference_type
+<span class="pl-en">__distance</span>(RandomAccessIterator  first,RandomAccessIterator last, 
+                                             random_access_iterator_tag )
+{
+    <span class="pl-k">return</span> last-first;
+}
+
+template&lt;class InputIterator&gt;
+<span class="pl-k">inline</span> typename iterator_traits&lt;InputIterator&gt;::difference_type
+<span class="pl-en">distance</span>(InputIterator first,InputIterator last)
+{
+    <span class="pl-k">typedef</span> typename iterator_traits&lt;InputIterator&gt;::iterator_category category;
+    <span class="pl-k">return</span> <span class="pl-c1">__distance</span>(first,last,<span class="pl-c1">category</span>());
+}
+
+
+<span class="pl-c">///////////////////////////////////////////////</span>
+template&lt;class InputIterator,class Distance&gt;
+<span class="pl-k">inline</span> <span class="pl-k">void</span> <span class="pl-en">__advance</span>(InputIterator &amp;i,Distance n,
+                      input_iterator_tag)
+{
+    <span class="pl-k">while</span>(n--) ++i;
+}
+
+template&lt;class BidirectionalIterator,class Distance&gt;
+<span class="pl-k">inline</span> <span class="pl-k">void</span> <span class="pl-en">__advance</span>(BidirectionalIterator &amp;i,Distance n,
+                      bidirectional_iterator_tag)
+{
+    <span class="pl-k">if</span>(n&gt;=<span class="pl-c1">0</span>)
+        <span class="pl-k">while</span>(n--) ++i;
+    <span class="pl-k">else</span>
+        <span class="pl-k">while</span>(n++) --i;
+}
+
+template&lt;class RandomAccessIterator,class Distance&gt;
+<span class="pl-k">inline</span> <span class="pl-k">void</span> <span class="pl-en">__advance</span>(RandomAccessIterator &amp;i,Distance n,
+                              random_access_iterator_tag)
+{
+    i+=n;
+}
+
+template&lt;class InputIterator,class Distance&gt;
+<span class="pl-k">inline</span> <span class="pl-k">void</span> <span class="pl-en">advance</span>(InputIterator &amp;i,Distance n)
+{
+    <span class="pl-c1">__advance</span>(i,n,<span class="pl-c1">iterator_category</span>(i));
+}</pre></div>
+
+<ul>
+<li>3：此技术的运用<br>
+比方上面求差值函数distance(first，last)中调用的__distance(first,last,category())函数
+就是通过第三个参数来萃取出迭代器的类型，然后选择相应的函数，若是随机迭代器则_diss=last=fast;
+否则的话就要通过循环来累加了<br>
+</li>
+</ul>
+
+<h1>
+<a id="三stl之find算法" class="anchor" href="#%E4%B8%89stl%E4%B9%8Bfind%E7%AE%97%E6%B3%95" aria-hidden="true"><span class="octicon octicon-link"></span></a>三：STL之Find算法</h1>
+
+<p>首先是SGI版本的：      </p>
+
+<div class="highlight highlight-source-c"><pre>Template&lt;class iterator ,class T&gt;
+Iterator   <span class="pl-en">find</span>(Iterator  first , Iterator  last,<span class="pl-k">const</span> T &amp;x)
+{
+    <span class="pl-c1">While</span>(first!=last &amp;&amp;*first!=x)
+{
+   ++first;
+}
+<span class="pl-k">return</span> first;
+}
+PG版本的
+template&lt;class _II, class _Ty&gt; <span class="pl-k">inline</span>
+_II <span class="pl-en">find</span>(_II _F, _II _L, <span class="pl-k">const</span> _Ty&amp; _V)
+{
+<span class="pl-k">for</span> (; _F != _L; ++_F)
+        <span class="pl-k">if</span> (*_F == _V)
+            <span class="pl-k">break</span>;
+    <span class="pl-k">return</span> (_F); 
+}</pre></div>
+
+<h1>
+<a id="四stl之search算法" class="anchor" href="#%E5%9B%9Bstl%E4%B9%8Bsearch%E7%AE%97%E6%B3%95" aria-hidden="true"><span class="octicon octicon-link"></span></a>四：STL之search算法</h1>
+
+<p>注意：SGI的版本是比PG的版本高的<br>
+  SGI的思想就是：<br>
+1：首先计算出两个要比较的迭代器之间的差值记作为d1与d2<br>
+2：然后通过比较d1与d2的大小，若d1&lt;d2 则直接返回last1<br>
+3：否则定义curent1=fast1   curent2=fast2 ，然后遍历第二个区间（即【fast2，last2】使用while（curent2！=last2）））<br>
+4：在while中若<em>current1==</em>current2  则都向后面跑<br>
+5：否则判断d1==d2是否满足，若满足则返回last1<br>
+6：否则重置curent2=fast2；curent1=++fast1 继续while循环<br>
+7：若退出循环则说明在【fast1，last1】中找到了与【fast2，last2】完全匹配的 返回fast1    </p>
+
+<ul>
+<li>首先是SGI版本的：<br>
+</li>
+</ul>
+
+<div class="highlight highlight-source-c"><pre>template&lt;class _FI1, class _FI2&gt; <span class="pl-k">inline</span>
+    _FI1 <span class="pl-en">search</span>(_FI1 _F1, _FI1 _L1, _FI2 _F2, _FI2 _L2)<span class="pl-c">//[意思是看F1到L1之间是否存在F2之L2完全匹配的子序列，若存在则返回F1否则返回L1]</span>
+    {<span class="pl-k">return</span> (<span class="pl-c1">_Search</span>(_F1, _L1, _F2, _L2,
+        <span class="pl-c1">_Dist_type</span>(_F1), <span class="pl-c1">_Dist_type</span>(_F2))); }
+template&lt;class _FI1, class _FI2, class _Pd1, class _Pd2&gt; <span class="pl-k">inline</span>
+    _FI1 <span class="pl-en">_Search</span>(_FI1 _F1, _FI1 _L1, _FI2 _F2 , _FI2 _L2,
+        _Pd1 *, _Pd2 *)
+    {_Pd1 d1 = <span class="pl-c1">0</span>;
+    <span class="pl-c1">_Distance</span>(_F1, _L1, _D1);
+    _Pd2 d2 = <span class="pl-c1">0</span>;
+    <span class="pl-c1">_Distance</span>(_F2, _L2, _D2);
+  <span class="pl-c">///////////////////////////////////////////</span>
+  <span class="pl-c1">If</span>(d1&lt;d2)<span class="pl-k">return</span> _L1;
+
+  _FI1 curent1=_F1;
+  _F2 curent2=_F2;
+
+  <span class="pl-c1">While</span>(curent2!=L2)
+{
+<span class="pl-c1">If</span>(*curent1==*curent2)
+{
+  ++curent1;
+++curent2;
+}
+Else
+{
+  <span class="pl-c1">If</span>(d1==d2) <span class="pl-k">return</span> L1;
+  Curent1=++F1;
+  Curent2=F2;
+  --d1;
+}
+
+}
+  Return F1;
+
+}</pre></div>
+
+<ul>
+<li>PG版本：
+PG的思想：其本质是和SGI是一样的，只不过是使用的是for循环，并且PG版本是在循环中找满足条件的，与SGI是相反的</li>
+</ul>
+
+<div class="highlight highlight-source-c"><pre>template&lt;class _FI1, class _FI2&gt; <span class="pl-k">inline</span>
+    _FI1 <span class="pl-en">search</span>(_FI1 _F1, _FI1 _L1, _FI2 _F2, _FI2 _L2)<span class="pl-c">//[意思是看F1到L1之间是否存在F2之L2完全匹配的子序列，</span>
+<span class="pl-c">//若存在则返回F1否则返回L1]</span>
+    {<span class="pl-k">return</span> (<span class="pl-c1">_Search</span>(_F1, _L1, _F2, _L2,
+        <span class="pl-c1">_Dist_type</span>(_F1), <span class="pl-c1">_Dist_type</span>(_F2))); }
+template&lt;class _FI1, class _FI2, class _Pd1, class _Pd2&gt; <span class="pl-k">inline</span>
+    _FI1 <span class="pl-en">_Search</span>(_FI1 _F1, _FI1 _L1, _FI2 _F2, _FI2 _L2,
+        _Pd1 *, _Pd2 *)
+    {_Pd1 _D1 = <span class="pl-c1">0</span>;
+    <span class="pl-c1">_Distance</span>(_F1, _L1, _D1);
+    _Pd2 _D2 = <span class="pl-c1">0</span>;
+    <span class="pl-c1">_Distance</span>(_F2, _L2, _D2);
+    <span class="pl-k">for</span> (; _D2 &lt;= _D1; ++_F1, --_D1)
+        {_FI1 _X1 = _F1;
+        <span class="pl-k">for</span> (_FI2 _X2 = _F2; ; ++_X1, ++_X2)
+            <span class="pl-k">if</span> (_X2 == _L2)
+                <span class="pl-k">return</span> (_F1);
+            <span class="pl-k">else</span> <span class="pl-k">if</span> (!(*_X1 == *_X2))
+                <span class="pl-k">break</span>; }
+    <span class="pl-k">return</span> (_L1); }
+    ```
+
+五：STL之for_each（）算法
+====
+
+   主要用到的就是仿函数的思想以及模板实参推演技术    
+   ```c
+Template&lt;class  T&gt;
+Struct  Print
+{
+   <span class="pl-c1">Operator</span>()(<span class="pl-k">const</span> T&amp;x)
+{
+    Cout&lt;&lt;x&lt;&lt;”  ”;
+}
+};
+
+Template&lt;class IT,class op&gt;
+<span class="pl-en">For_each</span>(IT I,IT L ,op fn)
+{
+<span class="pl-k">for</span>(;I!=L;++I)
+{
+  <span class="pl-c1">fn</span>(*I);
+}
+}、</pre></div>
+
+<h1>
+<a id="六stl的容器" class="anchor" href="#%E5%85%ADstl%E7%9A%84%E5%AE%B9%E5%99%A8" aria-hidden="true"><span class="octicon octicon-link"></span></a>六：STL的容器</h1>
+
+<ul>
+<li><p>1：首先STL的所有关联容器都自动拥有排序功能（由于底层采用的是红黑树）所以不需要用到这个sort算法，
+对于序列容器stack  queue  priority_queue由于拥有特定的出入口，所以不允许对其排序，剩下的对于
+vector  deque  list 前两者属于随机迭代器适合使用sort而list自己拥有sort排序方法  </p></li>
+<li><p>2:vector底层使用的是数据组实现的，stack和queue底层使用的是list[是双向迭代器]    </p></li>
+<li><p>3：注意list与vector的clear函数的区别，首先vector中的clear 只是把finish修改而且调用了析构函数
+但是没有释放空间，但是list中的clear却不但要调用析构函数而且还要释放空间（其主要原因是：由于
+vector是连续空间 而 list却不是连续的空间所以每当删除某一个节点的时候就要释放其空间不然就会造
+成内存泄露）     </p></li>
+<li><p>4：注意stack以及queue  priority_queue没有迭代器     </p></li>
+</ul>
+
+<h1>
+<a id="七绑定器的介绍" class="anchor" href="#%E4%B8%83%E7%BB%91%E5%AE%9A%E5%99%A8%E7%9A%84%E4%BB%8B%E7%BB%8D" aria-hidden="true"><span class="octicon octicon-link"></span></a>七：绑定器的介绍</h1>
+
+<p>首先绑定器分为一元绑定器与二元绑定器<br>
+   一元绑定器：就是把函数的第一个参数和函数绑定起来<br>
+   二元绑定器：就是把函数的第二个参数与函数绑定起来   </p>
+
+<p>实现方法就是：以下是二元绑定器实例：  </p>
+
+<div class="highlight highlight-source-c"><pre>#<span class="pl-k">if</span> <span class="pl-c1">0</span><span class="pl-c"></span>
+<span class="pl-c">template&lt;class _A1, class _A2, class _R&gt;</span>
+<span class="pl-c">struct binary_function </span>
+<span class="pl-c">{</span>
+<span class="pl-c">    typedef _A1 first_argument_type;</span>
+<span class="pl-c">    typedef _A2 second_argument_type;</span>
+<span class="pl-c">    typedef _R  result_type;</span>
+<span class="pl-c">};</span>
+<span class="pl-c"></span>
+<span class="pl-c">template&lt;class _Ty&gt;</span>
+<span class="pl-c">struct less : binary_function&lt;_Ty, _Ty, bool&gt; </span>
+<span class="pl-c">{</span>
+<span class="pl-c">    bool operator()(const _Ty&amp; _X, const _Ty&amp; _Y) const</span>
+<span class="pl-c">    {</span>
+<span class="pl-c">        return (_X &lt; _Y); </span>
+<span class="pl-c">    }</span>
+<span class="pl-c">};</span>
+<span class="pl-c"></span>#<span class="pl-k">endif</span>
+<span class="pl-c">//////////////////////////////</span>
+
+
+template&lt;class _Bfn&gt;
+<span class="pl-k">struct</span>  binder2nd :
+       public binary_function&lt;_Bfn::first_argument_type,
+                              _Bfn::second_argument_type,
+                              _Bfn::result_type&gt;
+{
+    _Bfn op;
+    _Bfn::second_argument_type value;
+public:
+    <span class="pl-c1">binder2nd</span>(<span class="pl-k">const</span> _Bfn &amp;_X,
+        <span class="pl-k">const</span> _Bfn::second_argument_type &amp;_Y)
+        :<span class="pl-c1">op</span>(_X),<span class="pl-c1">value</span>(_Y)
+    {}
+    _Bfn::result_type <span class="pl-smi">operator</span>()(_Bfn::first_argument_type &amp;_X)
+    {
+        <span class="pl-k">return</span> <span class="pl-c1">op</span>(_X,value);
+    }
+};
+
+template&lt;class _Bfn,class _Ty&gt; [<span class="pl-c">//此步是为了解决二货的人给的如：binder2nd&lt;less&lt;int&gt;&gt; (less&lt;double&gt;(),4)  两个类型不一致</span>
+]
+binder2nd&lt;_Bfn&gt; <span class="pl-en">bind2nd</span>(<span class="pl-k">const</span> _Bfn &amp;_X,<span class="pl-k">const</span> _Ty &amp;_Y)<span class="pl-c">//用binder2nd&lt;_Bfn&gt; 定义对象bind2nd</span>
+{
+    <span class="pl-k">return</span> binder2nd&lt;_Bfn&gt;(_X,(_Bfn::second_argument_type)_Y);
+
+}<span class="pl-c">//   binder2nd&lt;less&lt;int&gt;&gt; (less&lt;int&gt;(),4)     bind2nd(less&lt;int&gt;(),4)</span>
+
+template&lt;class _Ty,class _Bfn&gt;
+<span class="pl-k">void</span> <span class="pl-en">Show</span>(_Ty *ar,<span class="pl-k">int</span> n,_Bfn _Fn)
+{
+    <span class="pl-k">for</span>(<span class="pl-k">int</span> i=<span class="pl-c1">0</span>;i&lt;n;++i)
+    {
+        <span class="pl-k">if</span>(<span class="pl-c1">_Fn</span>(ar[i]))
+        {
+            cout&lt;&lt;ar[i]&lt;&lt;<span class="pl-s"><span class="pl-pds">"</span>  <span class="pl-pds">"</span></span>;
+        }
+    }
+    cout&lt;&lt;endl;
+}
+<span class="pl-k">void</span> <span class="pl-en">main</span>()
+{
+    <span class="pl-k">int</span> ar[<span class="pl-c1">10</span>]={<span class="pl-c1">1</span>,<span class="pl-c1">2</span>,<span class="pl-c1">3</span>,<span class="pl-c1">4</span>,<span class="pl-c1">5</span>,<span class="pl-c1">6</span>,<span class="pl-c1">7</span>,<span class="pl-c1">8</span>,<span class="pl-c1">9</span>,<span class="pl-c1">10</span>};
+    greater&lt;<span class="pl-k">int</span>&gt; gt;
+    less&lt;<span class="pl-k">int</span>&gt; ls;
+    <span class="pl-c1">Show</span>(ar,<span class="pl-c1">10</span>,<span class="pl-c1">bind2nd</span>(less&lt;<span class="pl-k">int</span>&gt;(),<span class="pl-c1">4</span>));
+}</pre></div>
+
+<h1>
+<a id="八stl各种容器的比较" class="anchor" href="#%E5%85%ABstl%E5%90%84%E7%A7%8D%E5%AE%B9%E5%99%A8%E7%9A%84%E6%AF%94%E8%BE%83" aria-hidden="true"><span class="octicon octicon-link"></span></a>八：STL各种容器的比较</h1>
+
+<ul>
+<li>
+<p>1 vector<br>
+向量 相当于一个数组<br>
+注意： 
+_First是指指向数组的第一个元素<br>
+_Last是指有效元素的下一个位置<br>
+_End是指所有空间最后的下一个位置<br>
+  在内存中分配一块连续的内存空间进行存储。支持不指定vector大小的存储。STL内部实现时，
+首先分配一个非常大的内存空间预备进行存储，即capacituy（）函数返回的大小，当超过此分配
+的空间时再整体重新放分配一块内存存储，这给人以vector可以不指定vector即一个连续内存的大
+小的感觉。通常此默认的内存分配能完成大部分情况下的存储。     </p>
+
+<ul>
+<li>优点：
+   (1) 不指定一块内存大小的数组的连续存储，即可以像数组一样操作，但可以对此数组 
+进行动态操作。通常体现在push_back() pop_back()
+ (2) 随机访问方便，即支持[ ]操作符和vector.at()
+ (3) 节省空间。</li>
+<li> 缺点：
+   (1) 在内部进行插入删除操作效率低。
+   (2) 只能在vector的最后进行push和pop，不能在vector的头进行push和pop。
+   (3) 当动态添加的数据超过vector默认分配的大小时要进行整体的重新分配、拷贝与释放</li>
+</ul>
+</li>
+<li>
+<p>2 list
+双向链表<br>
+每一个结点都包括一个信息快Info、一个前驱指针Pre、一个后驱指针Post。
+可以不分配必须的内存大小方便的进行添加和删除操作。使用的是非连续的内存
+空间进行存储   。   </p>
+
+<ul>
+<li> 优点：<br>
+   (1) 不使用连续内存完成动态操作。<br>
+   (2) 在内部方便的进行插入和删除操作<br>
+   (3) 可在两端进行push、pop<br>
+</li>
+<li> 缺点：
+   (1) 不能进行内部的随机访问，即不支持[ ]操作符和vector.at()<br>
+   (2) 相对于verctor占用内存多<br>
+</li>
+</ul>
+</li>
+<li>
+<p>3 deque
+双端队列 double-end queue<br>
+deque是在功能上合并了vector和list。   </p>
+
+<ul>
+<li>优点：<br>
+   (1) 随机访问方便，即支持[ ]操作符和vector.at()<br>
+   (2) 在内部方便的进行插入和删除操作<br>
+   (3) 可在两端进行push、pop<br>
+</li>
+<li>缺点：<br>
+  (1) 占用内存多<br>
+</li>
+</ul>
+</li>
+</ul>
+
+<p>使用区别：<br>
+     1 如果你需要高效的随即存取，而不在乎插入和删除的效率，使用vector<br>
+     2 如果你需要大量的插入和删除，而不关心随即存取，则应使用list<br>
+     3 如果你需要随即存取，而且关心两端数据的插入和删除，则应使用deque    </p>
+
+<h1>
+<a id="九stl总的概述" class="anchor" href="#%E4%B9%9Dstl%E6%80%BB%E7%9A%84%E6%A6%82%E8%BF%B0" aria-hidden="true"><span class="octicon octicon-link"></span></a>九：STL总的概述</h1>
+
+<p>STL提供六大组件，彼此可以组合套用   </p>
+
+<ul>
+<li><p>1、容器（containers）：各种数据结构，如vertor，list，deque，set，map.从实现的角度来看，
+STL容器是一种class template    </p></li>
+<li><p>2、算法（algorithms）：各种算法如sort，search，copy，earse。STL算法是一种 function template。</p></li>
+<li><p>3、迭代器（iterators）：扮演容器与算法之间的胶合剂，是所谓的“泛型指针”。所有STL容器都有自己
+的专属的迭代器。   </p></li>
+<li><p>4、仿函数（functors）：行为类似函数，可以作为算法的某些策略。从实现的角度来看，仿函数是一种
+重载了operator()的class或class template。    </p></li>
+<li><p>5、配接器（adapters实际上是一种设计模式）[即将一个class的接口转化为另一个class的接口，使其原
+来不兼容的接口变成可以合作的；  </p></li>
+</ul>
+
+<p>通常使用两种方法可以完成</p>
+
+<ul>
+<li><p>方法一：
+增加一个daapter类 ，然后使其公有继承类1私有继承类2，然后在重写类1的方法    </p></li>
+<li><p>方法二：
+增加一个daapter类 ，然后使其公有继承类1，把类2作为自己的子对象，然后在
+重写类1的方法里面调用类2的新方法   </p></li>
+</ul>
+
+<p>]：一种用来修饰容器或仿函数或迭代器借口的东西。例如queue和stack      </p>
+
+<ul>
+<li>6、配置器（allocators）：负责空间的配置与管理。配置器是一个实现了动态空间分配、空间管理、
+空间释放的class template。<br>
+</li>
+</ul>
+
+<h1>
+<a id="欢迎一起交流" class="anchor" href="#%E6%AC%A2%E8%BF%8E%E4%B8%80%E8%B5%B7%E4%BA%A4%E6%B5%81" aria-hidden="true"><span class="octicon octicon-link"></span></a>欢迎一起交流　　　　</h1>
+
+<p>在使用中有任何问题，欢迎反馈给我，可以用以下联系方式跟我交流</p>
+
+<ul>
+<li>邮件(1031379296#qq.com, 把#换成@)</li>
+<li>QQ: 1031379296</li>
+<li>weibo: <a href="http://weibo.com/u/2786211992/home">@王发康</a>
+</li>
+</ul>
+
+<h1>
+<a id="thx" class="anchor" href="#thx" aria-hidden="true"><span class="octicon octicon-link"></span></a>Thx</h1>
+
+<ul>
+<li>chunshengsterATgmail.com</li>
+</ul>
+
+<h1>
+<a id="author" class="anchor" href="#author" aria-hidden="true"><span class="octicon octicon-link"></span></a>Author</h1>
+
+<ul>
+<li>Linux\nginx\golang\c\c++爱好者</li>
+<li>欢迎一起交流  一起学习# </li>
+<li>Others say good and Others good</li>
+</ul>
+      </section>
+      <footer>
+        <p><small>Hosted on <a href="https://pages.github.com">GitHub Pages</a> using the Dinky theme</small></p>
+      </footer>
+    </div>
+    <!--[if !IE]><script>fixScale(document);</script><![endif]-->
+		          <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("c++ STL  stl containers　algorithms　allocators　adapters　analysis");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+
+  </body>
+</html>
